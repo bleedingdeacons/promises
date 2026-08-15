@@ -1,0 +1,36 @@
+<?php
+
+/**
+ * The correct signature for str_contains().
+ *
+ * PHPStan reads the entries in composer's autoload_files for symbol
+ * discovery, and mockery/mockery ships a PHP 8.0 polyfill there:
+ *
+ *     vendor/mockery/mockery/library/helpers.php
+ *
+ *     // @param non-empty-string $haystack
+ *     // @param non-empty-string $needle
+ *     function str_contains(string $haystack, string $needle): bool
+ *
+ * That docblock is wrong on both counts — str_contains() accepts an empty
+ * haystack and an empty needle, and PHP's own signature says so — but PHPStan
+ * has no way to know the declaration is a polyfill, and prefers it over the
+ * native signature. The result was every search filter in Tools\Unity being
+ * reported as passing the wrong type to a function it was calling correctly.
+ *
+ * The polyfill body never even runs: it is guarded by function_exists() and
+ * this plugin's floor is PHP 8.1, where str_contains() is native. So the fix
+ * is to correct the signature rather than to silence the call sites, which is
+ * why this is a stub and not an ignoreErrors entry — the latter would have to
+ * be repeated for every future call and would still be describing the symptom.
+ *
+ * Removable once mockery/mockery drops the polyfill or fixes the annotation.
+ */
+
+/**
+ * @param string $haystack
+ * @param string $needle
+ */
+function str_contains(string $haystack, string $needle): bool
+{
+}

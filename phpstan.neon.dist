@@ -1,0 +1,69 @@
+# Committed PHPStan config.
+#
+# phpstan.neon (no .dist) is gitignored and, if present, overrides this
+# file entirely — keep personal tweaks there. This .dist is what CI uses.
+#
+# scanDirectories makes the sibling plugins' symbols known without analysing
+# them. Promises implements nothing of Unity's, but it type-hints Unity's
+# repository and entity interfaces throughout and Trusted's rota contracts in
+# the Trusted tools — without these, PHPStan reports every one as an unknown
+# class and the real findings drown. CI checks both out alongside.
+#
+# There is deliberately no phpstan-baseline.neon. The plugin was written
+# against level 8 from the first commit, so there is nothing to grandfather,
+# and an empty baseline file is a place for findings to accumulate quietly.
+
+includes:
+    - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+    level: 8
+    # PHPStan 2 proves a condition dead when PHPDoc says it cannot happen.
+    # In WordPress plugin code PHPDoc is aspirational: values arrive from
+    # get_field(), HTTP responses, scraped HTML and $_POST, none of which the
+    # annotation can guarantee. Trusting it would mean deleting defensive
+    # guards that are correct at runtime, so PHPDoc informs types but does not
+    # prove conditions. Native types are still checked normally.
+    #
+    # It earns its place twice over here: every tool argument arrives as
+    # decoded JSON typed mixed, and the repositories are resolved from a PSR-11
+    # container that promises nothing more specific than mixed either.
+    treatPhpDocTypesAsCertain: false
+    # Analyse as PHP 8.1 — the plugin's floor and the version CI runs.
+    # Without this PHPStan analyses using whatever PHP is executing it,
+    # so a developer on 8.5 and CI on 8.1 disagree.
+    phpVersion: 80100
+    # An ignoreErrors pattern that stops matching is reported as an error by
+    # default, and whether a pattern matches depends on which sibling plugins
+    # are present — which differs between a developer's checkout and CI. Don't
+    # let that break the build.
+    reportUnmatchedIgnoredErrors: false
+    paths:
+        - src
+    excludePaths:
+        - tests
+    # Corrects a signature a dev dependency gets wrong; see the stub for the
+    # detail. stubFiles outrank both scanned declarations and PHPStan's own
+    # internal signatures, which is what makes this work.
+    stubFiles:
+        - phpstan/str-contains.stub
+    scanDirectories:
+        # Unity: every repository and entity interface Promises reads.
+        # psr/container is not listed — it is a require-dev entry, so PHPStan
+        # finds it through composer's autoloader, the same way Amber does.
+        - ../unity/src
+        # Trusted: the rota contracts and domain objects, used by the rota
+        # tools. An optional runtime dependency — the tools are not registered
+        # when it is absent — but its symbols still have to resolve here.
+        - ../trusted/src
+        # Sentinel is an optional runtime dependency: HasLogger degrades to
+        # error_log() when it is absent. Scanning its source makes
+        # Sentinel_Log_Channel resolvable without requiring it via composer.
+        # sentinel-logger.php is not PSR-4 compliant and composer skips it when
+        # generating autoload rules, so scanDirectories (which reads files
+        # directly) is what resolves it. Matches amber, tamar and trumpet.
+        - ../sentinel/src
+    scanFiles:
+        # Defines PROMISES_OPTION_KEY, PROMISES_VERSION and the rest. Not under
+        # paths (which is src only), so it has to be scanned explicitly.
+        - promises.php

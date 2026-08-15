@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+    bootstrap="tests/bootstrap.php"
+    colors="true"
+    displayDetailsOnTestsThatTriggerWarnings="true"
+    failOnRisky="true"
+    failOnWarning="true"
+>
+    <testsuites>
+        <testsuite name="Unit">
+            <directory suffix="Test.php">tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+        <exclude>
+            <!--
+                The admin settings screen: WordPress menu registration, the HTML
+                form render, and the admin-post handlers, which end in
+                wp_safe_redirect() + exit and so cannot be driven to completion
+                in a unit test. Excluded from the coverage denominator, as the
+                other suite plugins exclude their src/Admin layers.
+            -->
+            <file>src/Admin/SettingsPage.php</file>
+        </exclude>
+    </source>
+</phpunit>
