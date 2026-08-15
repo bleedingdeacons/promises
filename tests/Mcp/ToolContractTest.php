@@ -10,11 +10,11 @@ use Promises\Mcp\ToolRegistry;
 use Promises\Settings\Settings;
 use Promises\Support\Presenter;
 use Promises\Support\RotaPresenter;
+use Trusted\Testing\Doubles\InMemoryAssignmentRepository;
+use Trusted\Testing\Doubles\InMemoryRotaRepository;
 use Unity\Testing\Doubles\InMemoryGroupRepository;
 use Unity\Testing\Doubles\InMemoryMeetingRepository;
 use Unity\Testing\Doubles\InMemoryPositionRepository;
-use Promises\Tests\Tools\Trusted\FakeAssignmentRepository;
-use Promises\Tests\Tools\Trusted\FakeRotaRepository;
 use Promises\Tools\Trusted\AssignMemberTool;
 use Promises\Tools\Trusted\GetDayTool;
 use Promises\Tools\Trusted\GetWeekTool;
@@ -64,8 +64,8 @@ final class ToolContractTest extends TestCase
         $groups = new InMemoryGroupRepository();
         $meetings = new InMemoryMeetingRepository();
         $positions = new InMemoryPositionRepository();
-        $rota = new FakeRotaRepository();
-        $assignments = new FakeAssignmentRepository();
+        $rota = new InMemoryRotaRepository();
+        $assignments = new InMemoryAssignmentRepository();
 
         return [
             new ListMembersTool($members, $presenter),

@@ -12,11 +12,11 @@ use Promises\Tools\Trusted\AssignMemberTool;
 use Promises\Tools\Trusted\GetDayTool;
 use Promises\Tools\Trusted\GetWeekTool;
 use Promises\Tools\Trusted\UnassignTool;
-use Trusted\Contracts\AssignmentRepositoryInterface;
-use Trusted\Contracts\RotaRepositoryInterface;
 use Trusted\Domain\Assignment;
 use Trusted\Domain\Member as TrustedMember;
 use Trusted\Domain\Rota;
+use Trusted\Testing\Doubles\InMemoryAssignmentRepository;
+use Trusted\Testing\Doubles\InMemoryRotaRepository;
 use Unity\Testing\Doubles\InMemoryMemberRepository;
 use Unity\Testing\Doubles\MemberStub;
 
@@ -47,15 +47,17 @@ final class RotaToolsTest extends TestCase
      * Wednesday 12 August 2026 and Thursday the 13th; the Wednesday shift is
      * covered, the Thursday one is not.
      */
-    private function rotaRepository(): FakeRotaRepository
+    private function rotaRepository(): InMemoryRotaRepository
     {
         $ann = new TrustedMember('1', 'Ann B', 'ann@example.com', '07700900123');
 
-        return new FakeRotaRepository([
-            new Rota(10, '2026-08-12', '18:00', '22:00', 'Evening', null, [
+        // Keyed by id — Trusted's double indexes on the array key, not on
+        // Rota::id(), so a plain list would make find(10) miss.
+        return new InMemoryRotaRepository([
+            10 => new Rota(10, '2026-08-12', '18:00', '22:00', 'Evening', null, [
                 new Assignment(100, 10, '1', 'regular', '2026-08-01 09:00:00', $ann),
             ]),
-            new Rota(11, '2026-08-13', '18:00', '22:00', 'Evening'),
+            11 => new Rota(11, '2026-08-13', '18:00', '22:00', 'Evening'),
         ]);
     }
 
@@ -150,7 +152,7 @@ final class RotaToolsTest extends TestCase
 
     // ── Writes ────────────────────────────────────────────────────────
 
-    private function assignTool(FakeAssignmentRepository $assignments): AssignMemberTool
+    private function assignTool(InMemoryAssignmentRepository $assignments): AssignMemberTool
     {
         $members = new InMemoryMemberRepository([
             new MemberStub(id: 1, anonymousName: 'Ann B', telephoneResponder: true),
@@ -162,7 +164,7 @@ final class RotaToolsTest extends TestCase
 
     public function test_it_assigns_a_responder_to_an_open_shift(): void
     {
-        $assignments = new FakeAssignmentRepository();
+        $assignments = new InMemoryAssignmentRepository();
 
         $result = $this->assignTool($assignments)->call(['rota_id' => 11, 'member_id' => 1]);
 
@@ -181,12 +183,17 @@ final class RotaToolsTest extends TestCase
         $this->expectException(ToolException::class);
         $this->expectExceptionMessage('not flagged as a telephone responder');
 
-        $this->assignTool(new FakeAssignmentRepository())->call(['rota_id' => 11, 'member_id' => 2]);
+        $this->assignTool(new InMemoryAssignmentRepository())->call(['rota_id' => 11, 'member_id' => 2]);
     }
 
     public function test_it_refuses_a_shift_that_is_already_covered(): void
     {
-        $assignments = new FakeAssignmentRepository(taken: [10]);
+        // Trusted's double models the UNIQUE(rota_id) constraint for real:
+        // seeding an assignment against slot 10 is what makes assignIfOpen()
+        // return null, rather than a flag saying so.
+        $assignments = new InMemoryAssignmentRepository([
+            100 => new Assignment(100, 10, '1', '', '2026-08-01 09:00:00'),
+        ]);
 
         $this->expectException(ToolException::class);
         $this->expectExceptionMessage('already covered');
@@ -199,7 +206,7 @@ final class RotaToolsTest extends TestCase
         $this->expectException(ToolException::class);
         $this->expectExceptionMessage('No rota slot with id 999.');
 
-        $this->assignTool(new FakeAssignmentRepository())->call(['rota_id' => 999, 'member_id' => 1]);
+        $this->assignTool(new InMemoryAssignmentRepository())->call(['rota_id' => 999, 'member_id' => 1]);
     }
 
     public function test_it_reports_an_unknown_member(): void
@@ -207,13 +214,13 @@ final class RotaToolsTest extends TestCase
         $this->expectException(ToolException::class);
         $this->expectExceptionMessage('No member with id 42.');
 
-        $this->assignTool(new FakeAssignmentRepository())->call(['rota_id' => 11, 'member_id' => 42]);
+        $this->assignTool(new InMemoryAssignmentRepository())->call(['rota_id' => 11, 'member_id' => 42]);
     }
 
     public function test_unassign_removes_the_assignment_and_says_what_went(): void
     {
         $ann = new TrustedMember('1', 'Ann B', 'ann@example.com', '07700900123');
-        $assignments = new FakeAssignmentRepository(existing: [
+        $assignments = new InMemoryAssignmentRepository([
             100 => new Assignment(100, 10, '1', 'regular', '2026-08-01 09:00:00', $ann),
         ]);
 
@@ -223,7 +230,7 @@ final class RotaToolsTest extends TestCase
         // Captured before the delete — afterwards there is nothing left to
         // describe, and naming the person beats "removed assignment 100".
         $this->assertSame('Ann B', $result['removed']['member']['name']);
-        $this->assertSame([], $assignments->remaining());
+        $this->assertNull($assignments->find(100));
     }
 
     public function test_unassign_reports_an_unknown_assignment_and_says_which_id_it_wants(): void
@@ -231,154 +238,14 @@ final class RotaToolsTest extends TestCase
         $this->expectException(ToolException::class);
         $this->expectExceptionMessage('not a rota slot id');
 
-        (new UnassignTool(new FakeAssignmentRepository(), $this->presenter()))->call(['assignment_id' => 55]);
+        (new UnassignTool(new InMemoryAssignmentRepository(), $this->presenter()))->call(['assignment_id' => 55]);
     }
 
     public function test_the_write_tools_declare_themselves_as_not_read_only(): void
     {
         // Surfaced to clients as readOnlyHint, which is what lets a host
         // decide a call needs confirming.
-        $this->assertFalse($this->assignTool(new FakeAssignmentRepository())->isReadOnly());
-        $this->assertFalse((new UnassignTool(new FakeAssignmentRepository(), $this->presenter()))->isReadOnly());
-    }
-}
-
-/**
- * Rota slots held in memory, keyed by id.
- */
-final class FakeRotaRepository implements RotaRepositoryInterface
-{
-    /** @var array<int, Rota> */
-    private array $slots = [];
-
-    /** @param list<Rota> $slots */
-    public function __construct(array $slots = [])
-    {
-        foreach ($slots as $slot) {
-            $this->slots[(int) $slot->id()] = $slot;
-        }
-    }
-
-    public function find(int $id): ?Rota
-    {
-        return $this->slots[$id] ?? null;
-    }
-
-    public function findForWeek(string $weekStart): array
-    {
-        $end = (new \DateTimeImmutable($weekStart))->modify('+6 days')->format('Y-m-d');
-
-        return array_values(array_filter(
-            $this->slots,
-            static fn (Rota $slot): bool => $slot->slotDate() >= $weekStart && $slot->slotDate() <= $end
-        ));
-    }
-
-    public function findForDate(string $date): array
-    {
-        return array_values(array_filter(
-            $this->slots,
-            static fn (Rota $slot): bool => $slot->slotDate() === $date
-        ));
-    }
-
-    public function save(Rota $rota): Rota
-    {
-        return $rota;
-    }
-
-    public function delete(int $id): bool
-    {
-        unset($this->slots[$id]);
-
-        return true;
-    }
-
-    public function deleteWeek(string $weekStart): int
-    {
-        return 0;
-    }
-
-    public function deleteAll(): int
-    {
-        return 0;
-    }
-}
-
-/**
- * Assignments held in memory.
- *
- * assignIfOpen() returns null for any slot listed in $taken, which is how the
- * real repository reports a losing race against its unique constraint.
- */
-final class FakeAssignmentRepository implements AssignmentRepositoryInterface
-{
-    private int $nextId = 200;
-
-    /**
-     * @param array<int, Assignment> $existing Keyed by assignment id.
-     * @param list<int> $taken Rota ids already covered.
-     */
-    public function __construct(private array $existing = [], private array $taken = [])
-    {
-    }
-
-    /** @return array<int, Assignment> */
-    public function remaining(): array
-    {
-        return $this->existing;
-    }
-
-    public function find(int $id): ?Assignment
-    {
-        return $this->existing[$id] ?? null;
-    }
-
-    public function findByRota(int $rotaId): array
-    {
-        return [];
-    }
-
-    public function findByRotaIds(array $rotaIds): array
-    {
-        return [];
-    }
-
-    public function save(Assignment $assignment): Assignment
-    {
-        return $assignment;
-    }
-
-    public function assignIfOpen(int $rotaId, string $memberId, string $notes): ?Assignment
-    {
-        if (in_array($rotaId, $this->taken, true)) {
-            return null;
-        }
-
-        $assignment = new Assignment($this->nextId++, $rotaId, $memberId, $notes, '2026-08-15 12:00:00');
-        $this->existing[(int) $assignment->id()] = $assignment;
-
-        return $assignment;
-    }
-
-    public function delete(int $id): bool
-    {
-        if (!isset($this->existing[$id])) {
-            return false;
-        }
-
-        unset($this->existing[$id]);
-
-        return true;
-    }
-
-    public function deleteByRota(int $rotaId): bool
-    {
-        return true;
-    }
-
-    public function deleteAll(): int
-    {
-        return 0;
+        $this->assertFalse($this->assignTool(new InMemoryAssignmentRepository())->isReadOnly());
+        $this->assertFalse((new UnassignTool(new InMemoryAssignmentRepository(), $this->presenter()))->isReadOnly());
     }
 }
