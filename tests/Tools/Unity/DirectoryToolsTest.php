@@ -8,13 +8,13 @@ use BleedingDeacons\WpMocks\TestCase;
 use Promises\Mcp\ToolException;
 use Promises\Settings\Settings;
 use Promises\Support\Presenter;
-use Promises\Tests\Doubles\GroupStub;
-use Promises\Tests\Doubles\InMemoryGroupRepository;
-use Promises\Tests\Doubles\InMemoryMeetingRepository;
-use Promises\Tests\Doubles\InMemoryPositionRepository;
-use Promises\Tests\Doubles\LocationStub;
-use Promises\Tests\Doubles\MeetingStub;
-use Promises\Tests\Doubles\PositionStub;
+use Unity\Testing\Doubles\GroupStub;
+use Unity\Testing\Doubles\InMemoryGroupRepository;
+use Unity\Testing\Doubles\InMemoryMeetingRepository;
+use Unity\Testing\Doubles\InMemoryPositionRepository;
+use Unity\Testing\Doubles\LocationStub;
+use Unity\Testing\Doubles\MeetingStub;
+use Unity\Testing\Doubles\PositionStub;
 use Promises\Tools\Unity\GetGroupTool;
 use Promises\Tools\Unity\GetMeetingTool;
 use Promises\Tools\Unity\GetPositionTool;
@@ -54,13 +54,32 @@ final class DirectoryToolsTest extends TestCase
 
     private function meetingRepository(): InMemoryMeetingRepository
     {
-        $hall = new LocationStub(id: 100, name: 'Church Hall', city: 'Bristol', region: 'North', postalCode: 'BS1 1AA');
+        $hall = new LocationStub(
+            id: 100,
+            name: 'Church Hall',
+            address: '1 Example Street',
+            city: 'Bristol',
+            postalCode: 'BS1 1AA',
+            region: 'North',
+            timezone: 'Europe/London'
+        );
 
-        return new InMemoryMeetingRepository([
-            new MeetingStub(id: 10, name: 'Monday Steps', day: 1, online: false, location: $hall, types: ['O', 'ST']),
-            new MeetingStub(id: 11, name: 'Tuesday Online Big Book', day: 2, online: true),
-            new MeetingStub(id: 12, name: 'Monday Beginners', day: 1, online: false, location: $hall),
-        ]);
+        return new InMemoryMeetingRepository(
+            [
+                new MeetingStub(id: 10, name: 'Monday Steps', location: $hall, day: 1, types: ['O', 'ST']),
+                new MeetingStub(
+                    id: 11,
+                    name: 'Tuesday Online Big Book',
+                    day: 2,
+                    online: true,
+                    onlineLink: 'https://zoom.example/11'
+                ),
+                new MeetingStub(id: 12, name: 'Monday Beginners', location: $hall, day: 1),
+            ],
+            // Meeting id => group id. The interface exposes no group, so the
+            // double cannot derive this relation and takes it explicitly.
+            [10 => 1, 12 => 1]
+        );
     }
 
     private function positionRepository(): InMemoryPositionRepository
@@ -149,6 +168,27 @@ final class DirectoryToolsTest extends TestCase
         $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['mode' => 'in_person']);
 
         $this->assertSame(2, $result['total']);
+    }
+
+    public function test_it_filters_meetings_by_group(): void
+    {
+        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['group_id' => 1]);
+
+        // Group 1 holds meetings 10 and 12; meeting 11 belongs to no group.
+        $this->assertSame(2, $result['total']);
+        $this->assertSame([10, 12], array_column($result['records'], 'id'));
+    }
+
+    /**
+     * group_id is the most selective filter, so it reaches the repository and
+     * day is applied afterwards — the reverse of the day-plus-mode case above.
+     */
+    public function test_combining_group_and_day_narrows_further_in_php(): void
+    {
+        $tool = new ListMeetingsTool($this->meetingRepository(), $this->presenter());
+
+        $this->assertSame(2, $tool->call(['group_id' => 1, 'day' => 1])['total']);
+        $this->assertSame(0, $tool->call(['group_id' => 1, 'day' => 2])['total']);
     }
 
     public function test_it_searches_meetings_by_keyword(): void

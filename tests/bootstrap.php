@@ -110,10 +110,10 @@ if (!$promisesSibling('Unity\\', 'unity')) {
 // skip. Nothing else in the suite depends on Trusted being present.
 define('PROMISES_TESTS_HAVE_TRUSTED', $promisesSibling('Trusted\\', 'trusted'));
 
-// Stand-ins for the Unity entities Unity ships no doubles for — groups,
-// meetings, locations and positions. Required rather than autoloaded: they
-// live several to a file, which PSR-4 cannot resolve, and grouping them beats
-// eleven files of five-line stubs. Loaded after the sibling autoloaders above,
-// because each one implements a Unity interface that has to be resolvable at
-// the moment the class is declared.
-require_once __DIR__ . '/Doubles/UnityDoubles.php';
+// Nothing further to load. The entity stubs and in-memory repositories these
+// tests build on — MemberStub, GroupStub, MeetingStub, LocationStub,
+// PositionStub and the four InMemory*Repository classes — all ship from Unity
+// under Unity\Testing\Doubles, and resolve through the autoloader registered
+// above. Promises deliberately keeps no copies: a double for someone else's
+// contract, kept in someone else's repo, is exactly the drift Unity started
+// shipping its own doubles to prevent.
