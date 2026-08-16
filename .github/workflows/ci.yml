@@ -56,6 +56,16 @@ jobs:
           ref: main
           path: trusted
 
+      - name: Checkout Sentinel
+        # Also scanned by phpstan.neon.dist: HasLogger names
+        # Sentinel_Log_Channel, which lives in a file composer's PSR-4 rules
+        # skip, so only a directory scan resolves it.
+        uses: actions/checkout@v7
+        with:
+          repository: bleedingdeacons/sentinel
+          ref: main
+          path: sentinel
+
       - name: Setup PHP 8.1
         uses: shivammathur/setup-php@v2
         with:
@@ -280,6 +290,13 @@ jobs:
           repository: bleedingdeacons/trusted
           ref: main
           path: trusted
+
+      - name: Checkout Sentinel
+        uses: actions/checkout@v7
+        with:
+          repository: bleedingdeacons/sentinel
+          ref: main
+          path: sentinel
 
       - name: Setup PHP 8.1
         uses: shivammathur/setup-php@v2
