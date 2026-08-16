@@ -3,8 +3,8 @@ Contributors: thebleedingdeacons
 Tags: mcp, model context protocol, unity, intergroup, rota
 Requires at least: 6.1
 Tested up to: 6.9
-Stable tag: 1.1.0
-Build date: 2026/08/16 22:34:32
+Stable tag: 1.1.1
+Build date: 2026/08/17 00:10:39
 Requires PHP: 8.1
 License: MIT (Modified)
 
