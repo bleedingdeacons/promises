@@ -14,6 +14,7 @@ use Promises\Mcp\ToolRegistry;
 use Promises\Settings\Settings;
 use WP_Error;
 use WP_REST_Request;
+use WP_REST_Response;
 
 /**
  * The transport: routing, authentication and the HTTP-level decisions.
@@ -188,12 +189,67 @@ final class McpControllerTest extends TestCase
         $this->assertStringContainsString('Batched', $response->get_data()['error']['message']);
     }
 
-    public function test_get_on_the_endpoint_is_405_with_an_allow_header(): void
+    public function test_get_on_the_endpoint_is_405(): void
     {
         $response = $this->controller()->streamNotSupported();
 
         $this->assertSame(405, $response->get_status());
-        $this->assertSame('POST', $response->get_headers()['Allow']);
+    }
+
+    /**
+     * The Allow header is corrected on rest_post_dispatch, not in the handler.
+     *
+     * This is the assertion that was missing when the live endpoint answered
+     * `Allow: POST, GET`: the old test called streamNotSupported() directly and
+     * saw the header it had just set, never reaching the point where
+     * WordPress's own rest_send_allow_header() rebuilds it from the route's
+     * registered methods and hands GET back to the client.
+     */
+    public function test_the_allow_header_on_mcp_is_corrected_to_post_only(): void
+    {
+        $response = new WP_REST_Response(null, 405);
+        // What WordPress will have written by the time the filter runs.
+        $response->header('Allow', 'POST, GET');
+
+        $corrected = $this->controller()->correctAllowHeader(
+            $response,
+            null,
+            new WP_REST_Request([], '/promises/v1/mcp')
+        );
+
+        $this->assertSame('POST', $corrected->get_headers()['Allow']);
+    }
+
+    /**
+     * /health is a genuine GET, so its header must be left alone.
+     */
+    public function test_the_allow_header_on_other_routes_is_left_alone(): void
+    {
+        $response = new WP_REST_Response(null, 200);
+        $response->header('Allow', 'GET');
+
+        $corrected = $this->controller()->correctAllowHeader(
+            $response,
+            null,
+            new WP_REST_Request([], '/promises/v1/health')
+        );
+
+        $this->assertSame('GET', $corrected->get_headers()['Allow']);
+    }
+
+    /**
+     * rest_post_dispatch can carry a WP_Error rather than a response — a
+     * rejected request, for instance — and a filter that assumed otherwise
+     * would fatal on the auth-failure path.
+     */
+    public function test_the_filter_passes_through_anything_that_is_not_a_response(): void
+    {
+        $error = new WP_Error('nope', 'nope');
+
+        $this->assertSame(
+            $error,
+            $this->controller()->correctAllowHeader($error, null, new WP_REST_Request([], '/promises/v1/mcp'))
+        );
     }
 
     public function test_health_reports_the_protocol_version_and_tool_names(): void

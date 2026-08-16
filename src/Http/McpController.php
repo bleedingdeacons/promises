@@ -71,6 +71,58 @@ class McpController
             'callback' => [$this, 'health'],
             'permission_callback' => [$this, 'authenticate'],
         ]);
+
+        // Corrects the Allow header on /mcp; see correctAllowHeader(). Runs
+        // after WordPress's own rest_send_allow_header(), which sits on this
+        // filter at the default priority 10.
+        add_filter('rest_post_dispatch', [$this, 'correctAllowHeader'], 20, 3);
+    }
+
+    /**
+     * Force `Allow: POST` on /mcp.
+     *
+     * WordPress builds the Allow header itself, in rest_send_allow_header(),
+     * from every method registered against the matched route — and it does so
+     * on rest_post_dispatch, after the callback has returned. So the
+     * `Allow: POST` set while building the 405 response never survives: the
+     * live endpoint answered `Allow: POST, GET`, telling a client doing method
+     * discovery that GET was available and then refusing it with 405.
+     *
+     * GET stays registered deliberately. MCP says a server that does not
+     * support the notification stream should answer 405, and dropping the
+     * route would make WordPress answer 404 instead — which reads as "wrong
+     * URL" and sends someone off checking their configuration. So the handler
+     * stays and the header is corrected here instead.
+     *
+     * Only /mcp is touched. /health is a genuine GET and its header is right.
+     *
+     * @param mixed $response
+     * @param mixed $server
+     * @return mixed
+     */
+    public function correctAllowHeader($response, $server, WP_REST_Request $request)
+    {
+        // WP_REST_Response, not its WP_HTTP_Response parent. Every route here
+        // returns the former — including a rejected one, since WordPress turns
+        // the WP_Error from the permission callback into a WP_REST_Response
+        // before this filter runs — so nothing is lost by the narrower check.
+        //
+        // It also has to be the narrower one to be testable at all:
+        // bleedingdeacons/wp-mocks declares WP_REST_Response standalone, where
+        // real WordPress has it extend WP_HTTP_Response. A guard naming the
+        // parent passes in production and silently returns early under test,
+        // which is exactly how the first attempt at this fix looked broken.
+        if (!$response instanceof WP_REST_Response) {
+            return $response;
+        }
+
+        if ($request->get_route() === '/' . self::NAMESPACE . '/mcp') {
+            // Third argument defaults to replacing, which is what is wanted:
+            // WordPress has already written its own value by this point.
+            $response->header('Allow', 'POST');
+        }
+
+        return $response;
     }
 
     /**
@@ -151,8 +203,9 @@ class McpController
             'data' => ['status' => 405],
         ], 405);
 
-        $response->header('Allow', 'POST');
-
+        // The Allow header is not set here. WordPress overwrites it on
+        // rest_post_dispatch regardless of what this returns, so setting it
+        // would only look like it worked — see correctAllowHeader().
         return $response;
     }
 
