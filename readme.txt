@@ -39,7 +39,7 @@ session to hold open between requests and no handshake to remember.
 1. Install and activate Unity, and make sure its repositories are bound
    (tsml-for-unity does this in the Bleeding Deacons suite).
 2. Install and activate Promises.
-3. Go to Settings → Promises and generate an API key. Copy it — it is shown once.
+3. Go to Promises → Settings and generate an API key. Copy it — it is shown once.
 4. Point your MCP client at the endpoint shown on that screen and send the key
    as a bearer token.
 

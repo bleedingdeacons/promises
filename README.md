@@ -64,7 +64,7 @@ missing a binding loses the corresponding tools rather than erroring.
 
 ## Installation
 
-Install and activate as usual, then go to **Settings → Promises** and generate
+Install and activate as usual, then go to **Promises → Settings** and generate
 an API key. Until you do, the endpoint rejects every request.
 
 ## Connecting a client
@@ -153,7 +153,7 @@ promises.php                  bootstrap, kill switch, autoloader
     ├── Support/              domain objects → tool output (masking)
     ├── Auth/                 Argon2id key issue and verify
     ├── Settings/             the single option row
-    └── Admin/                Settings → Promises
+    └── Admin/                Promises → Settings
 ```
 
 Promises has no container of its own — it registers into Unity's on

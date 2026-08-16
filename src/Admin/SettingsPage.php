@@ -13,12 +13,17 @@ use Promises\Auth\ApiKeyManager;
 use Promises\Settings\Settings;
 
 /**
- * Settings → Promises.
+ * Promises → Settings.
  *
  * Four things an administrator needs: the endpoint URL to paste into a
  * client, a key to authenticate with, and the two switches that decide how
  * much this server gives away — whether contact details are masked, and
  * whether the rota can be written to.
+ *
+ * Lives under a top-level "Promises" menu rather than inside Settings. An MCP
+ * server is a thing you administer — hand out a key, revoke it, decide what it
+ * exposes — not a preference you set once, and the top-level entry is also
+ * where any second screen would hang.
  *
  * Constructed outside Unity's container (promises.php registers it on
  * plugins_loaded) so the screen still loads when Unity is missing or
@@ -61,9 +66,24 @@ class SettingsPage
 
     public function registerMenu(): void
     {
-        add_options_page(
+        add_menu_page(
             __('Promises — MCP server', 'promises'),
             __('Promises', 'promises'),
+            'manage_options',
+            self::PAGE_SLUG,
+            [$this, 'render'],
+            'dashicons-rest-api',
+            81
+        );
+
+        // add_menu_page() auto-creates a first child repeating the parent's
+        // label. Registering the same slug again renames that child to
+        // "Settings" rather than adding a second item, so the menu reads
+        // Promises → Settings and has room for a sibling later.
+        add_submenu_page(
+            self::PAGE_SLUG,
+            __('Promises — MCP server', 'promises'),
+            __('Settings', 'promises'),
             'manage_options',
             self::PAGE_SLUG,
             [$this, 'render']
@@ -221,7 +241,9 @@ class SettingsPage
 
     private function redirectBack(): void
     {
-        wp_safe_redirect(admin_url('options-general.php?page=' . self::PAGE_SLUG));
+        // admin.php, not options-general.php: the screen is a top-level menu
+        // page now, and the old URL 404s.
+        wp_safe_redirect(admin_url('admin.php?page=' . self::PAGE_SLUG));
         exit;
     }
 
