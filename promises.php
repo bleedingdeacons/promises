@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Promises
  * Description: Model Context Protocol server for Unity. Exposes Unity's members, groups, meetings and positions — and, when Trusted is active, its telephone-responder rota — as MCP tools over an authenticated WordPress REST endpoint, so an MCP client can read and work the intergroup's data directly.
- * Version: 1.1.3
+ * Version: 1.1.4
  * Build date: 2026/08/15
  * Requires at least: 6.1
  * Requires PHP: 8.1
