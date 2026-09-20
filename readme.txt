@@ -2,10 +2,10 @@
 Contributors: thebleedingdeacons
 Tags: mcp, model context protocol, unity, intergroup, rota
 Requires at least: 6.1
-Tested up to: 6.9
+Tested up to: 7.1.1
 Stable tag: 1.1.7
-Build date: 2026/09/05 16:43:01
-Requires PHP: 8.1
+Build date: 2026/09/20 18:56:40
+Requires PHP: 8.4
 License: MIT (Modified)
 
 A Model Context Protocol server for Unity, exposing members, groups, meetings, positions and the Trusted responder rota as MCP tools.
