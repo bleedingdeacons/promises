@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace Promises\Tests\Admin;
 
-use BleedingDeacons\WpMocks\TestCase;
 use BleedingDeacons\WpMocks\WpState;
 use Promises\Admin\SettingsPage;
 
-/**
+/*
  * Where the settings screen hangs in the admin menu.
  *
  * The screen itself is excluded from coverage — it is form markup and
@@ -19,41 +18,36 @@ use Promises\Admin\SettingsPage;
  * because the second renames the child add_menu_page() creates rather than
  * adding a second item.
  */
-final class SettingsPageTest extends TestCase
-{
-    public function test_it_registers_a_top_level_promises_menu(): void
-    {
-        (new SettingsPage())->registerMenu();
 
-        $this->assertSame('menu', WpState::$menus[0]['type']);
-        $this->assertSame('promises', WpState::$menus[0]['slug']);
-        $this->assertSame('Promises', WpState::$menus[0]['title']);
-        $this->assertSame('manage_options', WpState::$menus[0]['cap']);
-    }
+it('registers a top-level Promises menu', function () {
+    (new SettingsPage())->registerMenu();
 
-    public function test_the_settings_screen_is_the_first_child_of_that_menu(): void
-    {
-        (new SettingsPage())->registerMenu();
+    expect(WpState::$menus[0])
+        ->type->toBe('menu')
+        ->slug->toBe('promises')
+        ->title->toBe('Promises')
+        ->cap->toBe('manage_options');
+});
 
-        $this->assertCount(2, WpState::$menus);
+it('makes the settings screen the first child of that menu', function () {
+    (new SettingsPage())->registerMenu();
 
-        $submenu = WpState::$menus[1];
+    expect(WpState::$menus)->toHaveCount(2);
 
-        $this->assertSame('submenu', $submenu['type']);
-        $this->assertSame('promises', $submenu['parent']);
-        $this->assertSame('Settings', $submenu['title']);
-        $this->assertSame('manage_options', $submenu['cap']);
-    }
+    $submenu = WpState::$menus[1];
 
-    /**
-     * The submenu has to reuse the parent's slug. A different one would leave
-     * the auto-generated "Promises" child in place and add "Settings" beside
-     * it, so the menu would list the same screen twice.
-     */
-    public function test_the_child_reuses_the_parent_slug_so_it_renames_rather_than_duplicates(): void
-    {
-        (new SettingsPage())->registerMenu();
+    expect($submenu)
+        ->type->toBe('submenu')
+        ->parent->toBe('promises')
+        ->title->toBe('Settings')
+        ->cap->toBe('manage_options');
+});
 
-        $this->assertSame(WpState::$menus[0]['slug'], WpState::$menus[1]['slug']);
-    }
-}
+// The submenu has to reuse the parent's slug. A different one would leave
+// the auto-generated "Promises" child in place and add "Settings" beside
+// it, so the menu would list the same screen twice.
+it('reuses the parent slug for the child so it renames rather than duplicates', function () {
+    (new SettingsPage())->registerMenu();
+
+    expect(WpState::$menus[1]['slug'])->toBe(WpState::$menus[0]['slug']);
+});

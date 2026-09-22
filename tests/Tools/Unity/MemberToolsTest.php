@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Promises\Tests\Tools\Unity;
 
-use BleedingDeacons\WpMocks\TestCase;
 use Promises\Mcp\ToolException;
 use Promises\Settings\Settings;
 use Promises\Support\Presenter;
@@ -14,7 +13,7 @@ use Unity\Members\ResponderCertification;
 use Unity\Testing\Doubles\InMemoryMemberRepository;
 use Unity\Testing\Doubles\MemberStub;
 
-/**
+/*
  * The member tools — filtering, paging, and the masking that matters most
  * here, since members are the one entity carrying personal contact details.
  *
@@ -22,181 +21,159 @@ use Unity\Testing\Doubles\MemberStub;
  * hand-rolled doubles, so a change to Unity's interface breaks this suite
  * loudly instead of leaving it asserting against a stale contract.
  */
-final class MemberToolsTest extends TestCase
+
+function memberDirectory(): InMemoryMemberRepository
 {
-    private function repository(): InMemoryMemberRepository
-    {
-        return new InMemoryMemberRepository([
-            new MemberStub(
-                id: 1,
-                anonymousName: 'Ann B',
-                personalEmail: 'ann@example.com',
-                mobileNumber: '07700900123',
-                twelfthStepper: true,
-                telephoneResponder: true,
-                responderCertification: ResponderCertification::Certified,
-                area: 'North'
-            ),
-            new MemberStub(
-                id: 2,
-                anonymousName: 'Bob C',
-                personalEmail: 'bob@example.org',
-                mobileNumber: '07700900456',
-                twelfthStepper: false,
-                telephoneResponder: false,
-                area: 'South'
-            ),
-            new MemberStub(
-                id: 3,
-                anonymousName: 'Cara D',
-                personalEmail: 'cara@example.net',
-                twelfthStepper: true,
-                telephoneResponder: false,
-                area: 'North'
-            ),
-        ]);
-    }
+    return new InMemoryMemberRepository([
+        new MemberStub(
+            id: 1,
+            anonymousName: 'Ann B',
+            personalEmail: 'ann@example.com',
+            mobileNumber: '07700900123',
+            twelfthStepper: true,
+            telephoneResponder: true,
+            responderCertification: ResponderCertification::Certified,
+            area: 'North'
+        ),
+        new MemberStub(
+            id: 2,
+            anonymousName: 'Bob C',
+            personalEmail: 'bob@example.org',
+            mobileNumber: '07700900456',
+            twelfthStepper: false,
+            telephoneResponder: false,
+            area: 'South'
+        ),
+        new MemberStub(
+            id: 3,
+            anonymousName: 'Cara D',
+            personalEmail: 'cara@example.net',
+            twelfthStepper: true,
+            telephoneResponder: false,
+            area: 'North'
+        ),
+    ]);
+}
 
-    private function listTool(): ListMembersTool
-    {
-        return new ListMembersTool($this->repository(), new Presenter(new Settings()));
-    }
+function memberListTool(): ListMembersTool
+{
+    return new ListMembersTool(memberDirectory(), new Presenter(new Settings()));
+}
 
-    private function getTool(): GetMemberTool
-    {
-        return new GetMemberTool($this->repository(), new Presenter(new Settings()));
-    }
+function memberGetTool(): GetMemberTool
+{
+    return new GetMemberTool(memberDirectory(), new Presenter(new Settings()));
+}
 
-    public function test_it_lists_every_member_by_default(): void
-    {
-        $result = $this->listTool()->call([]);
+describe('list members', function () {
+    it('lists every member by default', function () {
+        $result = memberListTool()->call([]);
 
-        $this->assertSame(3, $result['total']);
-        $this->assertSame(3, $result['returned']);
-        $this->assertFalse($result['has_more']);
-    }
+        expect($result['total'])->toBe(3)
+            ->and($result['returned'])->toBe(3)
+            ->and($result['has_more'])->toBeFalse();
+    });
 
-    public function test_it_masks_contact_details_by_default(): void
-    {
-        $result = $this->listTool()->call(['search' => 'Ann']);
+    it('masks contact details by default', function () {
+        $result = memberListTool()->call(['search' => 'Ann']);
 
         $member = $result['records'][0];
 
-        $this->assertSame('a__@e______.com', $member['personal_email']);
-        $this->assertStringEndsWith('0123', $member['mobile_number']);
-        $this->assertStringNotContainsString('07700900', $member['mobile_number']);
-        // Stated explicitly so a model cannot mistake a masked value for a
-        // real address.
-        $this->assertTrue($member['contact_details_masked']);
-    }
+        expect($member['personal_email'])->toBe('a__@e______.com')
+            ->and($member['mobile_number'])->toEndWith('0123')
+            ->and($member['mobile_number'])->not->toContain('07700900')
+            // Stated explicitly so a model cannot mistake a masked value for a
+            // real address.
+            ->and($member['contact_details_masked'])->toBeTrue();
+    });
 
-    public function test_it_returns_real_contact_details_when_masking_is_off(): void
-    {
+    it('returns real contact details when masking is off', function () {
         (new Settings())->save(['mask_pii' => false]);
 
-        $result = $this->listTool()->call(['search' => 'Ann']);
+        $result = memberListTool()->call(['search' => 'Ann']);
 
-        $this->assertSame('ann@example.com', $result['records'][0]['personal_email']);
-        $this->assertFalse($result['records'][0]['contact_details_masked']);
-    }
+        expect($result['records'][0]['personal_email'])->toBe('ann@example.com')
+            ->and($result['records'][0]['contact_details_masked'])->toBeFalse();
+    });
 
-    public function test_it_filters_to_telephone_responders(): void
-    {
-        $result = $this->listTool()->call(['telephone_responders_only' => true]);
+    it('filters to telephone responders', function () {
+        $result = memberListTool()->call(['telephone_responders_only' => true]);
 
-        $this->assertSame(1, $result['total']);
-        $this->assertSame('Ann B', $result['records'][0]['anonymous_name']);
-        $this->assertSame('Certified', $result['records'][0]['responder_certification']);
-    }
+        expect($result['total'])->toBe(1)
+            ->and($result['records'][0]['anonymous_name'])->toBe('Ann B')
+            ->and($result['records'][0]['responder_certification'])->toBe('Certified');
+    });
 
-    public function test_it_filters_to_twelfth_steppers(): void
-    {
-        $result = $this->listTool()->call(['twelfth_steppers_only' => true]);
+    it('filters to twelfth steppers', function () {
+        $result = memberListTool()->call(['twelfth_steppers_only' => true]);
 
-        $this->assertSame(2, $result['total']);
-    }
+        expect($result['total'])->toBe(2);
+    });
 
-    public function test_it_filters_by_area_case_insensitively(): void
-    {
-        $result = $this->listTool()->call(['area' => 'north']);
+    it('filters by area case-insensitively', function () {
+        $result = memberListTool()->call(['area' => 'north']);
 
-        $this->assertSame(2, $result['total']);
-    }
+        expect($result['total'])->toBe(2);
+    });
 
-    public function test_search_matches_name_and_area(): void
-    {
-        $this->assertSame(1, $this->listTool()->call(['search' => 'cara'])['total']);
-        $this->assertSame(1, $this->listTool()->call(['search' => 'South'])['total']);
-    }
+    it('matches name and area on search', function () {
+        expect(memberListTool()->call(['search' => 'cara'])['total'])->toBe(1)
+            ->and(memberListTool()->call(['search' => 'South'])['total'])->toBe(1);
+    });
 
-    public function test_it_pages_and_reports_that_more_remain(): void
-    {
-        $result = $this->listTool()->call(['limit' => 2, 'offset' => 0]);
+    it('pages and reports that more remain', function () {
+        $result = memberListTool()->call(['limit' => 2, 'offset' => 0]);
 
-        $this->assertSame(2, $result['returned']);
-        $this->assertSame(3, $result['total']);
-        $this->assertTrue($result['has_more']);
+        expect($result['returned'])->toBe(2)
+            ->and($result['total'])->toBe(3)
+            ->and($result['has_more'])->toBeTrue();
 
-        $second = $this->listTool()->call(['limit' => 2, 'offset' => 2]);
+        $second = memberListTool()->call(['limit' => 2, 'offset' => 2]);
 
-        $this->assertSame(1, $second['returned']);
-        // has_more is computed from the total, so a page landing exactly on
-        // the end does not invite a pointless extra call.
-        $this->assertFalse($second['has_more']);
-    }
+        expect($second['returned'])->toBe(1)
+            // has_more is computed from the total, so a page landing exactly on
+            // the end does not invite a pointless extra call.
+            ->and($second['has_more'])->toBeFalse();
+    });
 
-    /**
-     * An over-large limit is clamped rather than rejected: the model has
-     * guessed, not erred, and a first page plus an honest has_more is more
-     * useful than an error it has to recover from.
-     */
-    public function test_an_absurd_limit_is_clamped_silently(): void
-    {
-        $result = $this->listTool()->call(['limit' => 100000]);
+    // An over-large limit is clamped rather than rejected: the model has
+    // guessed, not erred, and a first page plus an honest has_more is more
+    // useful than an error it has to recover from.
+    it('clamps an absurd limit silently', function () {
+        $result = memberListTool()->call(['limit' => 100000]);
 
-        $this->assertSame(200, $result['limit']);
-    }
+        expect($result['limit'])->toBe(200);
+    });
+});
 
-    public function test_get_member_returns_one_member_by_id(): void
-    {
-        $result = $this->getTool()->call(['id' => 2]);
+describe('get member', function () {
+    it('returns one member by id', function () {
+        $result = memberGetTool()->call(['id' => 2]);
 
-        $this->assertSame('Bob C', $result['anonymous_name']);
-    }
+        expect($result['anonymous_name'])->toBe('Bob C');
+    });
 
-    public function test_get_member_accepts_a_numeric_string_id(): void
-    {
+    it('accepts a numeric string id', function () {
         // A model that writes "id": "2" has expressed the same intent as one
         // that writes 2.
-        $this->assertSame('Bob C', $this->getTool()->call(['id' => '2'])['anonymous_name']);
-    }
+        expect(memberGetTool()->call(['id' => '2'])['anonymous_name'])->toBe('Bob C');
+    });
 
-    public function test_get_member_finds_by_exact_email(): void
-    {
-        $result = $this->getTool()->call(['email' => 'cara@example.net']);
+    it('finds by exact email', function () {
+        $result = memberGetTool()->call(['email' => 'cara@example.net']);
 
-        $this->assertSame(3, $result['id']);
-    }
+        expect($result['id'])->toBe(3);
+    });
 
-    public function test_get_member_reports_a_missing_id_as_a_tool_error(): void
-    {
-        $this->expectException(ToolException::class);
-        $this->expectExceptionMessage('No member with id 99.');
+    it('reports a missing id as a tool error', function () {
+        memberGetTool()->call(['id' => 99]);
+    })->throws(ToolException::class, 'No member with id 99.');
 
-        $this->getTool()->call(['id' => 99]);
-    }
+    it('rejects a call with neither id nor email', function () {
+        memberGetTool()->call([]);
+    })->throws(ToolException::class);
 
-    public function test_get_member_rejects_a_call_with_neither_id_nor_email(): void
-    {
-        $this->expectException(ToolException::class);
-
-        $this->getTool()->call([]);
-    }
-
-    public function test_get_member_rejects_a_negative_id(): void
-    {
-        $this->expectException(ToolException::class);
-
-        $this->getTool()->call(['id' => -1]);
-    }
-}
+    it('rejects a negative id', function () {
+        memberGetTool()->call(['id' => -1]);
+    })->throws(ToolException::class);
+});
