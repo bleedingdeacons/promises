@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Promises\Tests\Http;
 
-use BleedingDeacons\WpMocks\TestCase;
 use BleedingDeacons\WpMocks\WpState;
 use Promises\Auth\ApiKeyManager;
 use Promises\Http\McpController;
@@ -16,248 +15,217 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
-/**
+/*
  * The transport: routing, authentication and the HTTP-level decisions.
  *
- * One generated key is shared across the class — Argon2id costs about a tenth
+ * One generated key is shared across the file — Argon2id costs about a tenth
  * of a second per call, and every test here needs a valid credential.
  */
-final class McpControllerTest extends TestCase
+
+function mcpController(): McpController
 {
-    private static string $key = '';
+    $registry = new ToolRegistry();
 
-    private function controller(): McpController
-    {
-        $registry = new ToolRegistry();
+    return new McpController(
+        new Server($registry),
+        new ApiKeyManager(new Settings()),
+        $registry
+    );
+}
 
-        return new McpController(
-            new Server($registry),
-            new ApiKeyManager(new Settings()),
-            $registry
-        );
+/**
+ * A request carrying a valid key, and the settings row that makes it one.
+ */
+function authorisedMcpRequest(string $body = '', string $header = 'authorization'): WP_REST_Request
+{
+    static $key = '';
+
+    $manager = new ApiKeyManager(new Settings());
+
+    if ($key === '') {
+        $key = $manager->generate();
+    } else {
+        // Re-seed the option row WpState::reset() just cleared, without
+        // paying for another hash.
+        (new Settings())->save([
+            'api_key_hash' => $manager->hash($key),
+            'api_key_prefix' => substr($key, 0, 12),
+            'api_key_created_at' => '2026-08-15 00:00:00',
+        ]);
     }
 
-    /**
-     * A request carrying a valid key, and the settings row that makes it one.
-     */
-    private function authorisedRequest(string $body = '', string $header = 'authorization'): WP_REST_Request
-    {
-        $manager = new ApiKeyManager(new Settings());
+    $value = $header === 'authorization' ? 'Bearer ' . $key : $key;
 
-        if (self::$key === '') {
-            self::$key = $manager->generate();
-        } else {
-            // Re-seed the option row WpState::reset() just cleared, without
-            // paying for another hash.
-            (new Settings())->save([
-                'api_key_hash' => $manager->hash(self::$key),
-                'api_key_prefix' => substr(self::$key, 0, 12),
-                'api_key_created_at' => '2026-08-15 00:00:00',
-            ]);
-        }
+    return new WP_REST_Request([], '/promises/v1/mcp', [$header => $value], $body);
+}
 
-        $value = $header === 'authorization' ? 'Bearer ' . self::$key : self::$key;
+it('registers the mcp and health routes', function () {
+    mcpController()->registerRoutes();
 
-        return new WP_REST_Request([], '/promises/v1/mcp', [$header => $value], $body);
-    }
+    $routes = array_column(WpState::$restRoutes, 'route');
 
-    public function test_it_registers_the_mcp_and_health_routes(): void
-    {
-        $this->controller()->registerRoutes();
+    expect($routes)->toContain('/mcp', '/health')
+        ->and(WpState::$restRoutes[0]['namespace'])->toBe('promises/v1');
+});
 
-        $routes = array_column(WpState::$restRoutes, 'route');
+describe('authentication', function () {
+    it('authenticates a bearer token', function () {
+        expect(mcpController()->authenticate(authorisedMcpRequest()))->toBeTrue();
+    });
 
-        $this->assertContains('/mcp', $routes);
-        $this->assertContains('/health', $routes);
-        $this->assertSame('promises/v1', WpState::$restRoutes[0]['namespace']);
-    }
+    // Some hosts strip Authorization before PHP sees it, which is the whole
+    // reason the second header exists.
+    it('also authenticates the X-API-Key header', function () {
+        expect(mcpController()->authenticate(authorisedMcpRequest('', 'x-api-key')))->toBeTrue();
+    });
 
-    public function test_a_bearer_token_authenticates(): void
-    {
-        $this->assertTrue($this->controller()->authenticate($this->authorisedRequest()));
-    }
-
-    /**
-     * Some hosts strip Authorization before PHP sees it, which is the whole
-     * reason the second header exists.
-     */
-    public function test_the_x_api_key_header_also_authenticates(): void
-    {
-        $this->assertTrue($this->controller()->authenticate($this->authorisedRequest('', 'x-api-key')));
-    }
-
-    public function test_a_request_with_no_credential_is_rejected(): void
-    {
+    it('rejects a request with no credential', function () {
         $request = new WP_REST_Request([], '/promises/v1/mcp');
 
-        $error = $this->controller()->authenticate($request);
+        $error = mcpController()->authenticate($request);
 
-        $this->assertInstanceOf(WP_Error::class, $error);
-        $this->assertSame('promises_unauthorized', $error->get_error_code());
-        $this->assertSame(['status' => 401], $error->get_error_data());
-    }
+        expect($error)->toBeInstanceOf(WP_Error::class)
+            ->and($error->get_error_code())->toBe('promises_unauthorized')
+            ->and($error->get_error_data())->toBe(['status' => 401]);
+    });
 
-    public function test_a_wrong_key_is_rejected(): void
-    {
-        $this->authorisedRequest();
+    it('rejects a wrong key', function () {
+        authorisedMcpRequest();
 
         $request = new WP_REST_Request([], '/promises/v1/mcp', ['authorization' => 'Bearer prm_wrong']);
 
-        $this->assertInstanceOf(WP_Error::class, $this->controller()->authenticate($request));
-    }
+        expect(mcpController()->authenticate($request))->toBeInstanceOf(WP_Error::class);
+    });
 
-    /**
-     * Absent, malformed and wrong keys must be indistinguishable to the
-     * caller — which of the three it was goes to the log, not the response.
-     */
-    public function test_every_rejection_reads_the_same_to_the_caller(): void
-    {
-        $this->authorisedRequest();
+    // Absent, malformed and wrong keys must be indistinguishable to the
+    // caller — which of the three it was goes to the log, not the response.
+    it('makes every rejection read the same to the caller', function () {
+        authorisedMcpRequest();
 
-        $controller = $this->controller();
+        $controller = mcpController();
 
         $absent = $controller->authenticate(new WP_REST_Request([], '/mcp'));
         $malformed = $controller->authenticate(new WP_REST_Request([], '/mcp', ['authorization' => 'Basic nope']));
         $wrong = $controller->authenticate(new WP_REST_Request([], '/mcp', ['authorization' => 'Bearer prm_wrong']));
 
-        $this->assertInstanceOf(WP_Error::class, $absent);
-        $this->assertInstanceOf(WP_Error::class, $malformed);
-        $this->assertInstanceOf(WP_Error::class, $wrong);
-        $this->assertSame($absent->get_error_message(), $malformed->get_error_message());
-        $this->assertSame($absent->get_error_message(), $wrong->get_error_message());
-    }
+        expect($absent)->toBeInstanceOf(WP_Error::class)
+            ->and($malformed)->toBeInstanceOf(WP_Error::class)
+            ->and($wrong)->toBeInstanceOf(WP_Error::class)
+            ->and($malformed->get_error_message())->toBe($absent->get_error_message())
+            ->and($wrong->get_error_message())->toBe($absent->get_error_message());
+    });
+});
 
-    public function test_it_dispatches_a_request_and_answers_with_http_200(): void
-    {
+describe('handle', function () {
+    it('dispatches a request and answers with HTTP 200', function () {
         $body = json_encode(['jsonrpc' => '2.0', 'id' => 7, 'method' => 'ping']);
 
-        $response = $this->controller()->handle($this->authorisedRequest($body));
+        $response = mcpController()->handle(authorisedMcpRequest($body));
 
-        $this->assertSame(200, $response->get_status());
-        $this->assertSame(7, $response->get_data()['id']);
-    }
+        expect($response->get_status())->toBe(200)
+            ->and($response->get_data()['id'])->toBe(7);
+    });
 
-    /**
-     * A JSON-RPC error still leaves with HTTP 200: the transport delivered the
-     * message, and the failure is described inside it.
-     */
-    public function test_a_protocol_error_still_returns_http_200(): void
-    {
+    // A JSON-RPC error still leaves with HTTP 200: the transport delivered the
+    // message, and the failure is described inside it.
+    it('still returns HTTP 200 for a protocol error', function () {
         $body = json_encode(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'nope']);
 
-        $response = $this->controller()->handle($this->authorisedRequest($body));
+        $response = mcpController()->handle(authorisedMcpRequest($body));
 
-        $this->assertSame(200, $response->get_status());
-        $this->assertSame(JsonRpc::METHOD_NOT_FOUND, $response->get_data()['error']['code']);
-    }
+        expect($response->get_status())->toBe(200)
+            ->and($response->get_data()['error']['code'])->toBe(JsonRpc::METHOD_NOT_FOUND);
+    });
 
-    public function test_a_malformed_body_becomes_a_parse_error(): void
-    {
-        $response = $this->controller()->handle($this->authorisedRequest('{not json'));
+    it('turns a malformed body into a parse error', function () {
+        $response = mcpController()->handle(authorisedMcpRequest('{not json'));
 
-        $this->assertSame(JsonRpc::PARSE_ERROR, $response->get_data()['error']['code']);
-    }
+        expect($response->get_data()['error']['code'])->toBe(JsonRpc::PARSE_ERROR);
+    });
 
-    /**
-     * A notification gets 202 and no body — there is nothing to return and the
-     * client is not waiting.
-     */
-    public function test_a_notification_is_acknowledged_with_202_and_no_body(): void
-    {
+    // A notification gets 202 and no body — there is nothing to return and the
+    // client is not waiting.
+    it('acknowledges a notification with 202 and no body', function () {
         $body = json_encode(['jsonrpc' => '2.0', 'method' => 'notifications/initialized']);
 
-        $response = $this->controller()->handle($this->authorisedRequest($body));
+        $response = mcpController()->handle(authorisedMcpRequest($body));
 
-        $this->assertSame(202, $response->get_status());
-        $this->assertNull($response->get_data());
-    }
+        expect($response->get_status())->toBe(202)
+            ->and($response->get_data())->toBeNull();
+    });
 
-    /**
-     * MCP removed JSON-RPC batching in 2025-06-18 and has not restored it, so
-     * an array body is refused explicitly rather than guessed at.
-     */
-    public function test_a_batched_request_is_refused_explicitly(): void
-    {
+    // MCP removed JSON-RPC batching in 2025-06-18 and has not restored it, so
+    // an array body is refused explicitly rather than guessed at.
+    it('refuses a batched request explicitly', function () {
         $body = json_encode([
             ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'ping'],
             ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'ping'],
         ]);
 
-        $response = $this->controller()->handle($this->authorisedRequest($body));
+        $response = mcpController()->handle(authorisedMcpRequest($body));
 
-        $this->assertSame(JsonRpc::INVALID_REQUEST, $response->get_data()['error']['code']);
-        $this->assertStringContainsString('Batched', $response->get_data()['error']['message']);
-    }
+        expect($response->get_data()['error']['code'])->toBe(JsonRpc::INVALID_REQUEST)
+            ->and($response->get_data()['error']['message'])->toContain('Batched');
+    });
+});
 
-    public function test_get_on_the_endpoint_is_405(): void
-    {
-        $response = $this->controller()->streamNotSupported();
+describe('GET and the Allow header', function () {
+    it('answers GET on the endpoint with 405', function () {
+        $response = mcpController()->streamNotSupported();
 
-        $this->assertSame(405, $response->get_status());
-    }
+        expect($response->get_status())->toBe(405);
+    });
 
-    /**
-     * The Allow header is corrected on rest_post_dispatch, not in the handler.
-     *
-     * This is the assertion that was missing when the live endpoint answered
-     * `Allow: POST, GET`: the old test called streamNotSupported() directly and
-     * saw the header it had just set, never reaching the point where
-     * WordPress's own rest_send_allow_header() rebuilds it from the route's
-     * registered methods and hands GET back to the client.
-     */
-    public function test_the_allow_header_on_mcp_is_corrected_to_post_only(): void
-    {
+    // The Allow header is corrected on rest_post_dispatch, not in the handler.
+    //
+    // This is the assertion that was missing when the live endpoint answered
+    // `Allow: POST, GET`: the old test called streamNotSupported() directly and
+    // saw the header it had just set, never reaching the point where
+    // WordPress's own rest_send_allow_header() rebuilds it from the route's
+    // registered methods and hands GET back to the client.
+    it('corrects the Allow header on mcp to POST only', function () {
         $response = new WP_REST_Response(null, 405);
         // What WordPress will have written by the time the filter runs.
         $response->header('Allow', 'POST, GET');
 
-        $corrected = $this->controller()->correctAllowHeader(
+        $corrected = mcpController()->correctAllowHeader(
             $response,
             null,
             new WP_REST_Request([], '/promises/v1/mcp')
         );
 
-        $this->assertSame('POST', $corrected->get_headers()['Allow']);
-    }
+        expect($corrected->get_headers()['Allow'])->toBe('POST');
+    });
 
-    /**
-     * /health is a genuine GET, so its header must be left alone.
-     */
-    public function test_the_allow_header_on_other_routes_is_left_alone(): void
-    {
+    // /health is a genuine GET, so its header must be left alone.
+    it('leaves the Allow header on other routes alone', function () {
         $response = new WP_REST_Response(null, 200);
         $response->header('Allow', 'GET');
 
-        $corrected = $this->controller()->correctAllowHeader(
+        $corrected = mcpController()->correctAllowHeader(
             $response,
             null,
             new WP_REST_Request([], '/promises/v1/health')
         );
 
-        $this->assertSame('GET', $corrected->get_headers()['Allow']);
-    }
+        expect($corrected->get_headers()['Allow'])->toBe('GET');
+    });
 
-    /**
-     * rest_post_dispatch can carry a WP_Error rather than a response — a
-     * rejected request, for instance — and a filter that assumed otherwise
-     * would fatal on the auth-failure path.
-     */
-    public function test_the_filter_passes_through_anything_that_is_not_a_response(): void
-    {
+    // rest_post_dispatch can carry a WP_Error rather than a response — a
+    // rejected request, for instance — and a filter that assumed otherwise
+    // would fatal on the auth-failure path.
+    it('passes through anything that is not a response', function () {
         $error = new WP_Error('nope', 'nope');
 
-        $this->assertSame(
-            $error,
-            $this->controller()->correctAllowHeader($error, null, new WP_REST_Request([], '/promises/v1/mcp'))
-        );
-    }
+        expect(mcpController()->correctAllowHeader($error, null, new WP_REST_Request([], '/promises/v1/mcp')))
+            ->toBe($error);
+    });
+});
 
-    public function test_health_reports_the_protocol_version_and_tool_names(): void
-    {
-        $data = $this->controller()->health()->get_data();
+it('reports the protocol version and tool names on health', function () {
+    $data = mcpController()->health()->get_data();
 
-        $this->assertSame('ok', $data['status']);
-        $this->assertSame(PROMISES_MCP_PROTOCOL_VERSION, $data['protocolVersion']);
-        $this->assertSame([], $data['tools']);
-    }
-}
+    expect($data['status'])->toBe('ok')
+        ->and($data['protocolVersion'])->toBe(PROMISES_MCP_PROTOCOL_VERSION)
+        ->and($data['tools'])->toBe([]);
+});

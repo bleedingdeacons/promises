@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Promises\Tests\Tools\Unity;
 
-use BleedingDeacons\WpMocks\TestCase;
 use Promises\Mcp\ToolException;
 use Promises\Settings\Settings;
 use Promises\Support\Presenter;
@@ -22,7 +21,7 @@ use Promises\Tools\Unity\ListGroupsTool;
 use Promises\Tools\Unity\ListMeetingsTool;
 use Promises\Tools\Unity\ListPositionsTool;
 
-/**
+/*
  * The group, meeting and position tools.
  *
  * These carry no personal data, so the interesting behaviour is elsewhere:
@@ -30,260 +29,221 @@ use Promises\Tools\Unity\ListPositionsTool;
  * filters, and whether the presenters flatten Unity's objects into the shapes
  * the schemas promise.
  */
-final class DirectoryToolsTest extends TestCase
+
+function directoryPresenter(): Presenter
 {
-    private function presenter(): Presenter
-    {
-        return new Presenter(new Settings());
-    }
+    return new Presenter(new Settings());
+}
 
-    private function groupRepository(): InMemoryGroupRepository
-    {
-        return new InMemoryGroupRepository([
-            new GroupStub(
-                id: 1,
-                title: 'Monday Steps',
-                email: 'monday@example.com',
-                meetings: [new MeetingStub(id: 10), new MeetingStub(id: 12)],
-                phone: '07700900123',
-                districtId: 4
+function directoryGroups(): InMemoryGroupRepository
+{
+    return new InMemoryGroupRepository([
+        new GroupStub(
+            id: 1,
+            title: 'Monday Steps',
+            email: 'monday@example.com',
+            meetings: [new MeetingStub(id: 10), new MeetingStub(id: 12)],
+            phone: '07700900123',
+            districtId: 4
+        ),
+        new GroupStub(id: 2, title: 'Harbourside Group', email: 'harbour@example.com'),
+    ]);
+}
+
+function directoryMeetings(): InMemoryMeetingRepository
+{
+    $hall = new LocationStub(
+        id: 100,
+        name: 'Church Hall',
+        address: '1 Example Street',
+        city: 'Bristol',
+        postalCode: 'BS1 1AA',
+        region: 'North',
+        timezone: 'Europe/London'
+    );
+
+    return new InMemoryMeetingRepository(
+        [
+            new MeetingStub(id: 10, name: 'Monday Steps', location: $hall, day: 1, types: ['O', 'ST']),
+            new MeetingStub(
+                id: 11,
+                name: 'Tuesday Online Big Book',
+                day: 2,
+                online: true,
+                onlineLink: 'https://zoom.example/11'
             ),
-            new GroupStub(id: 2, title: 'Harbourside Group', email: 'harbour@example.com'),
-        ]);
-    }
+            new MeetingStub(id: 12, name: 'Monday Beginners', location: $hall, day: 1),
+        ],
+        // Meeting id => group id. The interface exposes no group, so the
+        // double cannot derive this relation and takes it explicitly.
+        [10 => 1, 12 => 1]
+    );
+}
 
-    private function meetingRepository(): InMemoryMeetingRepository
-    {
-        $hall = new LocationStub(
-            id: 100,
-            name: 'Church Hall',
-            address: '1 Example Street',
-            city: 'Bristol',
-            postalCode: 'BS1 1AA',
-            region: 'North',
-            timezone: 'Europe/London'
-        );
+function directoryPositions(): InMemoryPositionRepository
+{
+    return new InMemoryPositionRepository([
+        new PositionStub(id: 1, longName: 'Telephone Coordinator', minimumSobriety: 2, termYears: 3),
+        new PositionStub(id: 2, longName: 'Treasurer', minimumSobriety: 5, termYears: 2),
+    ]);
+}
 
-        return new InMemoryMeetingRepository(
-            [
-                new MeetingStub(id: 10, name: 'Monday Steps', location: $hall, day: 1, types: ['O', 'ST']),
-                new MeetingStub(
-                    id: 11,
-                    name: 'Tuesday Online Big Book',
-                    day: 2,
-                    online: true,
-                    onlineLink: 'https://zoom.example/11'
-                ),
-                new MeetingStub(id: 12, name: 'Monday Beginners', location: $hall, day: 1),
-            ],
-            // Meeting id => group id. The interface exposes no group, so the
-            // double cannot derive this relation and takes it explicitly.
-            [10 => 1, 12 => 1]
-        );
-    }
+// ── Groups ────────────────────────────────────────────────────────
+describe('groups', function () {
+    it('lists groups', function () {
+        $result = (new ListGroupsTool(directoryGroups(), directoryPresenter()))->call([]);
 
-    private function positionRepository(): InMemoryPositionRepository
-    {
-        return new InMemoryPositionRepository([
-            new PositionStub(id: 1, longName: 'Telephone Coordinator', minimumSobriety: 2, termYears: 3),
-            new PositionStub(id: 2, longName: 'Treasurer', minimumSobriety: 5, termYears: 2),
-        ]);
-    }
+        expect($result['total'])->toBe(2);
+    });
 
-    // ── Groups ────────────────────────────────────────────────────────
+    it('filters groups by name case-insensitively', function () {
+        $result = (new ListGroupsTool(directoryGroups(), directoryPresenter()))->call(['search' => 'harbour']);
 
-    public function test_it_lists_groups(): void
-    {
-        $result = (new ListGroupsTool($this->groupRepository(), $this->presenter()))->call([]);
+        expect($result['total'])->toBe(1)
+            ->and($result['records'][0]['title'])->toBe('Harbourside Group');
+    });
 
-        $this->assertSame(2, $result['total']);
-    }
+    // getMeetings() hands back hydrated Meeting objects. Only their ids go
+    // out — inlining each meeting in full would make a group listing most of
+    // the site's meeting table, delivered one group at a time.
+    it('carries meeting ids on a group, not whole meetings', function () {
+        $result = (new GetGroupTool(directoryGroups(), directoryPresenter()))->call(['id' => 1]);
 
-    public function test_it_filters_groups_by_name_case_insensitively(): void
-    {
-        $result = (new ListGroupsTool($this->groupRepository(), $this->presenter()))->call(['search' => 'harbour']);
+        expect($result['meeting_ids'])->toBe([10, 12])
+            ->and($result['district_id'])->toBe(4);
+    });
 
-        $this->assertSame(1, $result['total']);
-        $this->assertSame('Harbourside Group', $result['records'][0]['title']);
-    }
+    it('reports a missing id from get group', function () {
+        (new GetGroupTool(directoryGroups(), directoryPresenter()))->call(['id' => 99]);
+    })->throws(ToolException::class, 'No group with id 99.');
+});
 
-    /**
-     * getMeetings() hands back hydrated Meeting objects. Only their ids go
-     * out — inlining each meeting in full would make a group listing most of
-     * the site's meeting table, delivered one group at a time.
-     */
-    public function test_a_group_carries_meeting_ids_not_whole_meetings(): void
-    {
-        $result = (new GetGroupTool($this->groupRepository(), $this->presenter()))->call(['id' => 1]);
+// ── Meetings ──────────────────────────────────────────────────────
+describe('meetings', function () {
+    it('lists every meeting by default', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call([]);
 
-        $this->assertSame([10, 12], $result['meeting_ids']);
-        $this->assertSame(4, $result['district_id']);
-    }
+        expect($result['total'])->toBe(3);
+    });
 
-    public function test_get_group_reports_a_missing_id(): void
-    {
-        $this->expectException(ToolException::class);
-        $this->expectExceptionMessage('No group with id 99.');
+    it('filters meetings by day', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['day' => 1]);
 
-        (new GetGroupTool($this->groupRepository(), $this->presenter()))->call(['id' => 99]);
-    }
+        expect($result['total'])->toBe(2);
+    });
 
-    // ── Meetings ──────────────────────────────────────────────────────
+    // Sunday is day 0, which is meaningful — so the tool must not treat it as
+    // "no day given" the way an ordinary falsy check would.
+    it('treats day zero as Sunday and not as absent', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['day' => 0]);
 
-    public function test_it_lists_every_meeting_by_default(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call([]);
+        expect($result['total'])->toBe(0);
+    });
 
-        $this->assertSame(3, $result['total']);
-    }
+    it('filters meetings to online only', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['mode' => 'online']);
 
-    public function test_it_filters_meetings_by_day(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['day' => 1]);
+        expect($result['total'])->toBe(1)
+            ->and($result['records'][0]['is_online'])->toBeTrue();
+    });
 
-        $this->assertSame(2, $result['total']);
-    }
+    it('filters meetings to in person only', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['mode' => 'in_person']);
 
-    /**
-     * Sunday is day 0, which is meaningful — so the tool must not treat it as
-     * "no day given" the way an ordinary falsy check would.
-     */
-    public function test_day_zero_is_sunday_and_not_absent(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['day' => 0]);
+        expect($result['total'])->toBe(2);
+    });
 
-        $this->assertSame(0, $result['total']);
-    }
-
-    public function test_it_filters_meetings_to_online_only(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['mode' => 'online']);
-
-        $this->assertSame(1, $result['total']);
-        $this->assertTrue($result['records'][0]['is_online']);
-    }
-
-    public function test_it_filters_meetings_to_in_person_only(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['mode' => 'in_person']);
-
-        $this->assertSame(2, $result['total']);
-    }
-
-    public function test_it_filters_meetings_by_group(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['group_id' => 1]);
+    it('filters meetings by group', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['group_id' => 1]);
 
         // Group 1 holds meetings 10 and 12; meeting 11 belongs to no group.
-        $this->assertSame(2, $result['total']);
-        $this->assertSame([10, 12], array_column($result['records'], 'id'));
-    }
+        expect($result['total'])->toBe(2)
+            ->and(array_column($result['records'], 'id'))->toBe([10, 12]);
+    });
 
-    /**
-     * group_id is the most selective filter, so it reaches the repository and
-     * day is applied afterwards — the reverse of the day-plus-mode case above.
-     */
-    public function test_combining_group_and_day_narrows_further_in_php(): void
-    {
-        $tool = new ListMeetingsTool($this->meetingRepository(), $this->presenter());
+    // group_id is the most selective filter, so it reaches the repository and
+    // day is applied afterwards — the reverse of the day-plus-mode case above.
+    it('narrows further in PHP when combining group and day', function () {
+        $tool = new ListMeetingsTool(directoryMeetings(), directoryPresenter());
 
-        $this->assertSame(2, $tool->call(['group_id' => 1, 'day' => 1])['total']);
-        $this->assertSame(0, $tool->call(['group_id' => 1, 'day' => 2])['total']);
-    }
+        expect($tool->call(['group_id' => 1, 'day' => 1])['total'])->toBe(2)
+            ->and($tool->call(['group_id' => 1, 'day' => 2])['total'])->toBe(0);
+    });
 
-    public function test_it_searches_meetings_by_keyword(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))->call(['search' => 'beginners']);
+    it('searches meetings by keyword', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))->call(['search' => 'beginners']);
 
-        $this->assertSame(1, $result['total']);
-        $this->assertSame('Monday Beginners', $result['records'][0]['name']);
-    }
+        expect($result['total'])->toBe(1)
+            ->and($result['records'][0]['name'])->toBe('Monday Beginners');
+    });
 
-    /**
-     * Only one filter can reach the repository, so the rest are applied in
-     * PHP afterwards. This is the case that proves the second pass runs.
-     */
-    public function test_combining_day_and_mode_narrows_further_in_php(): void
-    {
-        $tool = new ListMeetingsTool($this->meetingRepository(), $this->presenter());
+    // Only one filter can reach the repository, so the rest are applied in
+    // PHP afterwards. This is the case that proves the second pass runs.
+    it('narrows further in PHP when combining day and mode', function () {
+        $tool = new ListMeetingsTool(directoryMeetings(), directoryPresenter());
 
         // Day 1 has two meetings, both in person, so asking for online as
         // well must come back empty rather than returning the day's two.
-        $this->assertSame(0, $tool->call(['day' => 1, 'mode' => 'online'])['total']);
-        $this->assertSame(2, $tool->call(['day' => 1, 'mode' => 'in_person'])['total']);
-    }
+        expect($tool->call(['day' => 1, 'mode' => 'online'])['total'])->toBe(0)
+            ->and($tool->call(['day' => 1, 'mode' => 'in_person'])['total'])->toBe(2);
+    });
 
-    public function test_combining_day_and_search_narrows_further_in_php(): void
-    {
-        $result = (new ListMeetingsTool($this->meetingRepository(), $this->presenter()))
+    it('narrows further in PHP when combining day and search', function () {
+        $result = (new ListMeetingsTool(directoryMeetings(), directoryPresenter()))
             ->call(['day' => 1, 'search' => 'beginners']);
 
-        $this->assertSame(1, $result['total']);
-    }
+        expect($result['total'])->toBe(1);
+    });
 
-    public function test_it_presents_a_meetings_location(): void
-    {
-        $result = (new GetMeetingTool($this->meetingRepository(), $this->presenter()))->call(['id' => 10]);
+    it('presents a meeting\'s location', function () {
+        $result = (new GetMeetingTool(directoryMeetings(), directoryPresenter()))->call(['id' => 10]);
 
-        $this->assertSame('Church Hall', $result['location']['name']);
-        $this->assertSame('Bristol', $result['location']['city']);
-        $this->assertSame('Europe/London', $result['location']['timezone']);
-        $this->assertSame(['O', 'ST'], $result['types']);
-        $this->assertSame('Monday', $result['day_of_week']);
-    }
+        expect($result['location']['name'])->toBe('Church Hall')
+            ->and($result['location']['city'])->toBe('Bristol')
+            ->and($result['location']['timezone'])->toBe('Europe/London')
+            ->and($result['types'])->toBe(['O', 'ST'])
+            ->and($result['day_of_week'])->toBe('Monday');
+    });
 
-    /**
-     * Location is nullable on the interface — an online-only meeting
-     * legitimately has none — so it must not be dereferenced blind.
-     */
-    public function test_an_online_meeting_has_a_null_location(): void
-    {
-        $result = (new GetMeetingTool($this->meetingRepository(), $this->presenter()))->call(['id' => 11]);
+    // Location is nullable on the interface — an online-only meeting
+    // legitimately has none — so it must not be dereferenced blind.
+    it('gives an online meeting a null location', function () {
+        $result = (new GetMeetingTool(directoryMeetings(), directoryPresenter()))->call(['id' => 11]);
 
-        $this->assertNull($result['location']);
-        $this->assertSame('https://zoom.example/11', $result['online_link']);
-    }
+        expect($result['location'])->toBeNull()
+            ->and($result['online_link'])->toBe('https://zoom.example/11');
+    });
 
-    public function test_get_meeting_reports_a_missing_id(): void
-    {
-        $this->expectException(ToolException::class);
-        $this->expectExceptionMessage('No meeting with id 99.');
+    it('reports a missing id from get meeting', function () {
+        (new GetMeetingTool(directoryMeetings(), directoryPresenter()))->call(['id' => 99]);
+    })->throws(ToolException::class, 'No meeting with id 99.');
+});
 
-        (new GetMeetingTool($this->meetingRepository(), $this->presenter()))->call(['id' => 99]);
-    }
+// ── Positions ─────────────────────────────────────────────────────
+describe('positions', function () {
+    it('lists positions', function () {
+        $result = (new ListPositionsTool(directoryPositions(), directoryPresenter()))->call([]);
 
-    // ── Positions ─────────────────────────────────────────────────────
+        expect($result['total'])->toBe(2)
+            // Positions are few and slow-changing, so the default page is larger.
+            ->and($result['limit'])->toBe(50);
+    });
 
-    public function test_it_lists_positions(): void
-    {
-        $result = (new ListPositionsTool($this->positionRepository(), $this->presenter()))->call([]);
+    it('filters positions by name', function () {
+        $result = (new ListPositionsTool(directoryPositions(), directoryPresenter()))->call(['search' => 'treasurer']);
 
-        $this->assertSame(2, $result['total']);
-        // Positions are few and slow-changing, so the default page is larger.
-        $this->assertSame(50, $result['limit']);
-    }
+        expect($result['total'])->toBe(1);
+    });
 
-    public function test_it_filters_positions_by_name(): void
-    {
-        $result = (new ListPositionsTool($this->positionRepository(), $this->presenter()))->call(['search' => 'treasurer']);
+    it('presents a position\'s requirements', function () {
+        $result = (new GetPositionTool(directoryPositions(), directoryPresenter()))->call(['id' => 1]);
 
-        $this->assertSame(1, $result['total']);
-    }
+        expect($result['long_name'])->toBe('Telephone Coordinator')
+            ->and($result['minimum_sobriety_years'])->toBe(2)
+            ->and($result['term_years'])->toBe(3);
+    });
 
-    public function test_it_presents_a_positions_requirements(): void
-    {
-        $result = (new GetPositionTool($this->positionRepository(), $this->presenter()))->call(['id' => 1]);
-
-        $this->assertSame('Telephone Coordinator', $result['long_name']);
-        $this->assertSame(2, $result['minimum_sobriety_years']);
-        $this->assertSame(3, $result['term_years']);
-    }
-
-    public function test_get_position_reports_a_missing_id(): void
-    {
-        $this->expectException(ToolException::class);
-        $this->expectExceptionMessage('No service position with id 99.');
-
-        (new GetPositionTool($this->positionRepository(), $this->presenter()))->call(['id' => 99]);
-    }
-}
+    it('reports a missing id from get position', function () {
+        (new GetPositionTool(directoryPositions(), directoryPresenter()))->call(['id' => 99]);
+    })->throws(ToolException::class, 'No service position with id 99.');
+});

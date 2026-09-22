@@ -4,114 +4,87 @@ declare(strict_types=1);
 
 namespace Promises\Tests\Auth;
 
-use BleedingDeacons\WpMocks\TestCase;
 use Promises\Auth\ApiKeyManager;
 use Promises\Settings\Settings;
 
-/**
+/*
  * API key issue and verification.
  *
  * Argon2id is deliberately slow, so this suite generates as few keys as it
  * can get away with — each generate() costs roughly a tenth of a second.
  */
-final class ApiKeyManagerTest extends TestCase
-{
-    private function manager(): ApiKeyManager
-    {
-        return new ApiKeyManager(new Settings());
-    }
 
-    public function test_a_generated_key_verifies(): void
-    {
-        $manager = $this->manager();
+beforeEach(function () {
+    $this->manager = new ApiKeyManager(new Settings());
+});
 
-        $key = $manager->generate();
+it('verifies a generated key', function () {
+    $key = $this->manager->generate();
 
-        $this->assertStringStartsWith('prm_', $key);
-        $this->assertTrue($manager->verify($key));
-    }
+    expect($key)->toStartWith('prm_')
+        ->and($this->manager->verify($key))->toBeTrue();
+});
 
-    public function test_the_plain_key_is_never_stored(): void
-    {
-        $manager = $this->manager();
-        $settings = new Settings();
+it('never stores the plain key', function () {
+    $settings = new Settings();
 
-        $key = $manager->generate();
+    $key = $this->manager->generate();
 
-        $stored = get_option(PROMISES_OPTION_KEY);
+    $stored = get_option(PROMISES_OPTION_KEY);
 
-        // The hash is stored; the key itself must appear nowhere in the row.
-        $this->assertStringNotContainsString($key, serialize($stored));
-        $this->assertStringStartsWith('$argon2id$', $settings->apiKeyHash());
-    }
+    // The hash is stored; the key itself must appear nowhere in the row.
+    expect(serialize($stored))->not->toContain($key)
+        ->and($settings->apiKeyHash())->toStartWith('$argon2id$');
+});
 
-    public function test_the_stored_prefix_identifies_the_key_without_revealing_it(): void
-    {
-        $manager = $this->manager();
-        $settings = new Settings();
+it('stores a prefix that identifies the key without revealing it', function () {
+    $settings = new Settings();
 
-        $key = $manager->generate();
+    $key = $this->manager->generate();
 
-        $prefix = $settings->apiKeyPrefix();
+    $prefix = $settings->apiKeyPrefix();
 
-        $this->assertSame(substr($key, 0, 12), $prefix);
+    expect($prefix)->toBe(substr($key, 0, 12))
         // Twelve characters of a 68-character key: enough for an admin to tell
         // two keys apart on screen, useless for reconstructing one.
-        $this->assertLessThan(strlen($key) / 2, strlen($prefix));
-    }
+        ->and(strlen($prefix))->toBeLessThan(strlen($key) / 2);
+});
 
-    public function test_a_wrong_key_does_not_verify(): void
-    {
-        $manager = $this->manager();
+it('does not verify a wrong key', function () {
+    $this->manager->generate();
 
-        $manager->generate();
+    expect($this->manager->verify('prm_' . str_repeat('0', 64)))->toBeFalse();
+});
 
-        $this->assertFalse($manager->verify('prm_' . str_repeat('0', 64)));
-    }
+// An unconfigured Promises is a closed door, not an open one.
+it('verifies nothing when no key is configured', function () {
+    expect($this->manager->verify(''))->toBeFalse()
+        ->and($this->manager->verify('prm_anything'))->toBeFalse();
+});
 
-    /**
-     * An unconfigured Promises is a closed door, not an open one.
-     */
-    public function test_nothing_verifies_when_no_key_is_configured(): void
-    {
-        $manager = $this->manager();
+it('rejects an empty presented key even when one is configured', function () {
+    $this->manager->generate();
 
-        $this->assertFalse($manager->verify(''));
-        $this->assertFalse($manager->verify('prm_anything'));
-    }
+    expect($this->manager->verify(''))->toBeFalse();
+});
 
-    public function test_an_empty_presented_key_is_rejected_even_when_one_is_configured(): void
-    {
-        $manager = $this->manager();
+it('invalidates the previous key when generating again', function () {
+    $first = $this->manager->generate();
+    $second = $this->manager->generate();
 
-        $manager->generate();
+    expect($first)->not->toBe($second)
+        ->and($this->manager->verify($first))->toBeFalse()
+        ->and($this->manager->verify($second))->toBeTrue();
+});
 
-        $this->assertFalse($manager->verify(''));
-    }
+it('clears the key and its metadata on revoke', function () {
+    $settings = new Settings();
 
-    public function test_generating_again_invalidates_the_previous_key(): void
-    {
-        $manager = $this->manager();
+    $key = $this->manager->generate();
+    $this->manager->revoke();
 
-        $first = $manager->generate();
-        $second = $manager->generate();
-
-        $this->assertNotSame($first, $second);
-        $this->assertFalse($manager->verify($first));
-        $this->assertTrue($manager->verify($second));
-    }
-
-    public function test_revoking_clears_the_key_and_its_metadata(): void
-    {
-        $manager = $this->manager();
-        $settings = new Settings();
-
-        $key = $manager->generate();
-        $manager->revoke();
-
-        $this->assertFalse($manager->verify($key));
-        $this->assertFalse($settings->hasApiKey());
-        $this->assertSame('', $settings->apiKeyPrefix());
-        $this->assertSame('', $settings->apiKeyCreatedAt());
-    }
-}
+    expect($this->manager->verify($key))->toBeFalse()
+        ->and($settings->hasApiKey())->toBeFalse()
+        ->and($settings->apiKeyPrefix())->toBe('')
+        ->and($settings->apiKeyCreatedAt())->toBe('');
+});
